@@ -65,6 +65,10 @@ class TestTrainerConfig:
         assert cfg.max_epochs == 100
         assert cfg.lr_scheduler == "cosine"
         assert cfg.logger == "tensorboard"
+        assert cfg.save_dir == "./experiments"
+        assert cfg.dataset_name is None
+        assert cfg.model_name is None
+        assert cfg.run_name is None
         assert cfg.stages is not None
         assert len(cfg.stages) == 1
         assert cfg.stages[0].name == "train"

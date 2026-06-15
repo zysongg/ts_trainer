@@ -130,8 +130,11 @@ class PredictionWriter(Callback):
     def __init__(self, output_dir: str = "./predictions") -> None:
         super().__init__()
         self.output_dir = Path(output_dir)
+        self._inputs: list[np.ndarray] = []
         self._predictions: list[np.ndarray] = []
         self._targets: list[np.ndarray] = []
+        self._samples: list[np.ndarray] = []
+        self.saved_outputs: dict[str, dict[str, np.ndarray]] = {}
 
     def on_test_batch_end(
         self,
@@ -163,25 +166,57 @@ class PredictionWriter(Callback):
 
     def _collect(self, outputs: Any, batch: Any) -> None:
         if isinstance(outputs, dict):
-            if "preds" in outputs:
-                self._predictions.append(_to_numpy(outputs["preds"]))
-            if "y" in outputs:
-                self._targets.append(_to_numpy(outputs["y"]))
+            inputs = outputs.get("inputs")
+            if inputs is None and isinstance(batch, dict):
+                inputs = batch.get("x")
+            if inputs is not None:
+                self._inputs.append(_to_numpy(inputs))
+
+            samples = outputs.get("samples")
+            if samples is not None:
+                self._samples.append(_to_numpy(samples))
+
+            preds = outputs.get("preds", outputs.get("pred"))
+            if preds is not None:
+                self._predictions.append(_to_numpy(preds))
+            elif samples is not None:
+                self._predictions.append(np.median(_to_numpy(samples), axis=1))
+
+            targets = outputs.get("targets", outputs.get("y"))
+            if targets is not None:
+                self._targets.append(_to_numpy(targets))
         elif isinstance(outputs, Tensor):
-            self._predictions.append(_to_numpy(outputs))
+            prediction = _to_numpy(outputs)
+            if prediction.ndim > 0:
+                self._predictions.append(prediction)
+        elif isinstance(outputs, np.ndarray):
+            if outputs.ndim > 0:
+                self._predictions.append(outputs)
+
+        if not isinstance(outputs, dict) and isinstance(batch, dict) and "x" in batch:
+            self._inputs.append(_to_numpy(batch["x"]))
 
     def _save(self, prefix: str) -> None:
-        if not self._predictions:
+        if not self._predictions and not self._samples:
             return
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        data: dict[str, np.ndarray] = {
-            "predictions": np.concatenate(self._predictions, axis=0),
-        }
+        data: dict[str, np.ndarray] = {}
+        if self._inputs:
+            data["inputs"] = np.concatenate(self._inputs, axis=0)
+        if self._predictions:
+            data["predictions"] = np.concatenate(self._predictions, axis=0)
+        elif self._samples:
+            data["predictions"] = np.median(np.concatenate(self._samples, axis=0), axis=1)
         if self._targets:
             data["targets"] = np.concatenate(self._targets, axis=0)
+        if self._samples:
+            data["samples"] = np.concatenate(self._samples, axis=0)
         np.savez(self.output_dir / f"{prefix}_results.npz", **data)
+        self.saved_outputs[prefix] = data
+        self._inputs.clear()
         self._predictions.clear()
         self._targets.clear()
+        self._samples.clear()
 
 
 def _to_numpy(x: Any) -> np.ndarray:
@@ -222,7 +257,15 @@ class SlimProgressBar(ProgressBar):
         self._epoch_start = time.time()
 
     def on_train_epoch_end(self, trainer: Trainer, pl_module: LightningModule) -> None:
-        self._print_epoch(trainer, pl_module)
+        """Do nothing here - wait for validation to complete."""
+        pass
+
+    def on_validation_epoch_end(self, trainer: Trainer, pl_module: LightningModule) -> None:
+        """Print epoch summary after validation (when all metrics are aggregated)."""
+        if not trainer.sanity_checking:
+            # Only print on rank 0 in DDP
+            if trainer.is_global_zero:
+                self._print_epoch(trainer, pl_module)
 
     def _print_epoch(self, trainer: Trainer, pl_module: LightningModule) -> None:
         epoch = trainer.current_epoch + 1
@@ -232,16 +275,48 @@ class SlimProgressBar(ProgressBar):
         metrics = trainer.callback_metrics
         parts = [f"[Epoch {epoch}/{max_epochs}]"]
 
-        for key in ("train_loss", "val_loss", "val/loss"):
-            if key in metrics:
-                val = metrics[key]
-                parts.append(f"{key}={val:.4f}" if isinstance(val, float) else f"{key}={val.item():.4f}")
+        # Prefer epoch-level metrics (computed in on_*_epoch_end)
+        if "train_epoch_loss" in metrics:
+            val = metrics["train_epoch_loss"]
+            if isinstance(val, torch.Tensor):
+                val = val.item()
+            parts.append(f"train_loss={val:.4f}")
+        elif "train_loss" in metrics:
+            val = metrics["train_loss"]
+            if isinstance(val, torch.Tensor):
+                val = val.item()
+            parts.append(f"train_loss={val:.4f}")
+
+        if "val_epoch_loss" in metrics:
+            val = metrics["val_epoch_loss"]
+            if isinstance(val, torch.Tensor):
+                val = val.item()
+            parts.append(f"val_loss={val:.4f}")
+        elif "val_loss" in metrics:
+            val = metrics["val_loss"]
+            if isinstance(val, torch.Tensor):
+                val = val.item()
+            parts.append(f"val_loss={val:.4f}")
+
+        if "val_epoch_mse" in metrics:
+            val = metrics["val_epoch_mse"]
+            if isinstance(val, torch.Tensor):
+                val = val.item()
+            parts.append(f"val_mse={val:.4f}")
+        elif "val_mse" in metrics:
+            val = metrics["val_mse"]
+            if isinstance(val, torch.Tensor):
+                val = val.item()
+            parts.append(f"val_mse={val:.4f}")
 
         # Learning rate
-        if pl_module.optimizers():
-            opt = pl_module.optimizers()[0]
-            lr = opt.param_groups[0]["lr"]
-            parts.append(f"lr={lr:.1e}")
+        try:
+            opt = pl_module.optimizers()
+            if opt is not None:
+                lr = opt.param_groups[0]["lr"]
+                parts.append(f"lr={lr:.1e}")
+        except Exception:
+            pass
 
         parts.append(f"({_format_time(elapsed)})")
         print(" ".join(parts), flush=True)

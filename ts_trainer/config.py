@@ -93,7 +93,7 @@ class TrainerConfig(BaseModel):
     # -- Validation & logging --
     check_val_every_n_epoch: int = Field(1, ge=1, description="Validation check interval")
     log_every_n_steps: int = Field(50, ge=1, description="Log every N steps")
-    enable_progress_bar: bool = Field(True, description="Show progress bar")
+    enable_progress_bar: bool = Field(False, description="Show progress bar")
     enable_model_summary: bool = Field(True, description="Print model summary")
     limit_train_batches: int | float = Field(1.0, ge=0, description="Limit training batches")
     limit_val_batches: int | float = Field(1.0, ge=0, description="Limit validation batches")
@@ -116,8 +116,14 @@ class TrainerConfig(BaseModel):
     save_last: bool = Field(True, description="Save last checkpoint")
 
     # -- Paths --
-    save_dir: str = Field("./logs", description="Output directory")
-    experiment_name: str = Field("ts_experiment", description="Experiment name")
+    save_dir: str = Field("./experiments", description="Root directory for timestamped experiment runs")
+    experiment_name: str = Field("ts_experiment", description="Experiment name suffix")
+    dataset_name: str | None = Field(None, description="Dataset name used in automatic run folder names")
+    model_name: str | None = Field(None, description="Model name used in automatic run folder names")
+    run_name: str | None = Field(
+        None,
+        description="Run folder name. If None, uses YYYYMMDD_HHMMSS_<dataset_name>_<model_name> when available.",
+    )
 
     # -- Logger --
     logger: LoggerType = Field("tensorboard", description="Logger type")
@@ -139,7 +145,11 @@ class TrainerConfig(BaseModel):
     def _resolve_stages(self) -> TrainerConfig:
         """Auto-create single stage if stages is None."""
         if self.stages is None:
-            self.stages = [StageConfig(name="train", epochs=self.max_epochs)]
+            self.stages = [StageConfig(
+                name="train",
+                epochs=self.max_epochs,
+                early_stopping_patience=self.early_stopping_patience,
+            )]
         return self
 
     # -- YAML serialization --

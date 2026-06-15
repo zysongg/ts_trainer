@@ -70,8 +70,10 @@ class TestTrainingTimer:
 class TestPredictionWriter:
     def test_init(self, tmp_path):
         writer = PredictionWriter(output_dir=str(tmp_path / "preds"))
+        assert writer._inputs == []
         assert writer._predictions == []
         assert writer._targets == []
+        assert writer._samples == []
 
     def test_save(self, tmp_path):
         import numpy as np
@@ -103,6 +105,40 @@ class TestPredictionWriter:
         data = np.load(tmp_path / "preds" / "predict_results.npz")
         assert "predictions" in data
         assert "targets" not in data
+
+    def test_collect_structured_probabilistic_outputs(self, tmp_path):
+        import numpy as np
+
+        writer = PredictionWriter(output_dir=str(tmp_path / "preds"))
+        outputs = {
+            "inputs": torch.randn(2, 3, 8),
+            "samples": torch.randn(2, 5, 3, 4),
+            "preds": torch.randn(2, 3, 4),
+            "targets": torch.randn(2, 3, 4),
+        }
+        writer._collect(outputs, batch={})
+        writer._save("predict")
+
+        data = np.load(tmp_path / "preds" / "predict_results.npz")
+        assert data["inputs"].shape == (2, 3, 8)
+        assert data["samples"].shape == (2, 5, 3, 4)
+        assert data["predictions"].shape == (2, 3, 4)
+        assert data["targets"].shape == (2, 3, 4)
+
+    def test_collect_legacy_pred_y_outputs(self, tmp_path):
+        import numpy as np
+
+        writer = PredictionWriter(output_dir=str(tmp_path / "preds"))
+        writer._collect(
+            {"pred": torch.randn(2, 3, 4), "y": torch.randn(2, 3, 4)},
+            batch={"x": torch.randn(2, 3, 8)},
+        )
+        writer._save("test")
+
+        data = np.load(tmp_path / "preds" / "test_results.npz")
+        assert data["inputs"].shape == (2, 3, 8)
+        assert data["predictions"].shape == (2, 3, 4)
+        assert data["targets"].shape == (2, 3, 4)
 
 
 class TestSlimProgressBar:
