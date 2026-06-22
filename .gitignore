@@ -25,6 +25,8 @@ venv/
 .pytest_cache/
 .coverage
 htmlcov/
+output/
+*.ckpt
 
 # Logs
 *.log
