@@ -95,6 +95,8 @@ results = trainer.evaluate(
     mode="point",
     return_outputs=True,
     prune_outputs=False,
+    save_metrics=False,
+    save_outputs=False,
 )
 ```
 
@@ -104,7 +106,8 @@ results = trainer.evaluate(
 inputs, targets, preds, samples
 ```
 
-Use `prune_outputs=False` when `ts_pipeline` owns the run directory layout.
+Use `prune_outputs=False`, `save_metrics=False`, and `save_outputs=False` when
+`ts_pipeline` owns the run directory layout.
 
 ## Common Tasks
 

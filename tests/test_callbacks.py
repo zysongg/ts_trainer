@@ -106,6 +106,17 @@ class TestPredictionWriter:
         assert "predictions" in data
         assert "targets" not in data
 
+    def test_save_can_disable_file_writes(self, tmp_path):
+        import numpy as np
+
+        writer = PredictionWriter(output_dir=str(tmp_path / "preds"), write_files=False)
+        writer._predictions = [np.random.randn(10, 5)]
+        writer._save("test")
+
+        assert not (tmp_path / "preds" / "test_results.npz").exists()
+        assert "test" in writer.saved_outputs
+        assert writer.saved_outputs["test"]["predictions"].shape == (10, 5)
+
     def test_collect_structured_probabilistic_outputs(self, tmp_path):
         import numpy as np
 

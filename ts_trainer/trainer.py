@@ -383,9 +383,10 @@ class Trainer:
         datamodule: pl.LightningDataModule | None = None,
         dataloaders: Any = None,
         ckpt_path: str | None = None,
+        save_outputs: bool = True,
     ) -> list[dict[str, float]]:
         """Test the model."""
-        pl_trainer = self._create_pl_trainer(stage=None, test_mode=True)
+        pl_trainer = self._create_pl_trainer(stage=None, test_mode=True, save_outputs=save_outputs)
         results = pl_trainer.test(
             model, datamodule=datamodule, dataloaders=dataloaders, ckpt_path=ckpt_path,
         )
@@ -475,6 +476,8 @@ class Trainer:
         mode: str = "deterministic",
         prune_outputs: bool = True,
         return_outputs: bool = False,
+        save_metrics: bool = True,
+        save_outputs: bool = True,
     ) -> dict[str, float]:
         """End-to-end evaluation: test + collect predictions + compute metrics.
 
@@ -493,6 +496,9 @@ class Trainer:
             return_outputs: If True, return dict with both metrics and collected
                 outputs (inputs, targets, predictions, samples). If False,
                 return only metrics dict.
+            save_metrics: If True, save metrics in the trainer experiment root.
+            save_outputs: If True, save collected test outputs in the trainer
+                experiment root.
 
         Returns:
             Dictionary with test_loss and requested metrics. If return_outputs=True,
@@ -506,14 +512,21 @@ class Trainer:
             # {"test_loss": 0.042, "MSE": 0.042, "MAE": 0.159}
         """
         # 1. Run test
-        test_results = self.test(model, dataloaders=dataloaders, datamodule=datamodule, ckpt_path=ckpt_path)
+        test_results = self.test(
+            model,
+            dataloaders=dataloaders,
+            datamodule=datamodule,
+            ckpt_path=ckpt_path,
+            save_outputs=save_outputs,
+        )
         results = dict(test_results[0]) if test_results else {}
 
         metric_task = self._normalize_metric_task(task)
         metric_mode = self._normalize_metric_mode(mode)
         selected_metrics = metrics or DEFAULT_EVAL_METRICS.get((metric_task, metric_mode))
         if not selected_metrics:
-            self._save_metrics(results, prefix="evaluate")
+            if save_metrics:
+                self._save_metrics(results, prefix="evaluate")
             if prune_outputs:
                 self._prune_experiment_outputs()
             return self._maybe_return_outputs(results, {}, return_outputs)
@@ -526,7 +539,8 @@ class Trainer:
         samples = collected.get("samples")
         if targets is None:
             print("Warning: Prediction outputs do not include targets, skipping metric computation.")
-            self._save_metrics(results, prefix="evaluate")
+            if save_metrics:
+                self._save_metrics(results, prefix="evaluate")
             if prune_outputs:
                 self._prune_experiment_outputs()
             return self._maybe_return_outputs(results, collected, return_outputs)
@@ -540,7 +554,8 @@ class Trainer:
             if metric_mode == "probabilistic":
                 if samples is None:
                     print("Warning: Prediction outputs do not include samples, skipping probabilistic metrics.")
-                    self._save_metrics(results, prefix="evaluate")
+                    if save_metrics:
+                        self._save_metrics(results, prefix="evaluate")
                     if prune_outputs:
                         self._prune_experiment_outputs()
                     return self._maybe_return_outputs(results, collected, return_outputs)
@@ -549,7 +564,8 @@ class Trainer:
                 metric_input = preds if preds is not None else samples
                 if metric_input is None:
                     print("Warning: Prediction outputs do not include predictions, skipping metric computation.")
-                    self._save_metrics(results, prefix="evaluate")
+                    if save_metrics:
+                        self._save_metrics(results, prefix="evaluate")
                     if prune_outputs:
                         self._prune_experiment_outputs()
                     return self._maybe_return_outputs(results, collected, return_outputs)
@@ -560,7 +576,8 @@ class Trainer:
         except Exception as e:
             print(f"Warning: Failed to compute metrics: {e}")
 
-        self._save_metrics(results, prefix="evaluate")
+        if save_metrics:
+            self._save_metrics(results, prefix="evaluate")
         if prune_outputs:
             self._prune_experiment_outputs()
         return self._maybe_return_outputs(results, collected, return_outputs)
@@ -901,6 +918,7 @@ class Trainer:
         self,
         stage: StageConfig | None = None,
         test_mode: bool = False,
+        save_outputs: bool = True,
     ) -> pl.Trainer:
         cfg = self.config
         max_epochs = stage.epochs if stage else cfg.max_epochs
@@ -947,8 +965,9 @@ class Trainer:
         # Add SlimProgressBar by default for epoch-level output
         callbacks.append(SlimProgressBar())
 
-        # Save structured test/predict outputs for plotting.
-        callbacks.append(PredictionWriter(output_dir=str(self._experiment_dir)))
+        # Collect structured test/predict outputs. Pipeline callers can keep the
+        # in-memory collection while disabling root-level files.
+        callbacks.append(PredictionWriter(output_dir=str(self._experiment_dir), write_files=save_outputs))
 
         # -- Logger --
         loggers = self._build_loggers(stage_dir, stage) if not test_mode else False

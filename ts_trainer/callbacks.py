@@ -127,9 +127,10 @@ class PredictionWriter(Callback):
         output_dir: Directory to save predictions.
     """
 
-    def __init__(self, output_dir: str = "./predictions") -> None:
+    def __init__(self, output_dir: str = "./predictions", write_files: bool = True) -> None:
         super().__init__()
         self.output_dir = Path(output_dir)
+        self.write_files = write_files
         self._inputs: list[np.ndarray] = []
         self._predictions: list[np.ndarray] = []
         self._targets: list[np.ndarray] = []
@@ -211,7 +212,8 @@ class PredictionWriter(Callback):
             data["targets"] = np.concatenate(self._targets, axis=0)
         if self._samples:
             data["samples"] = np.concatenate(self._samples, axis=0)
-        np.savez(self.output_dir / f"{prefix}_results.npz", **data)
+        if self.write_files:
+            np.savez(self.output_dir / f"{prefix}_results.npz", **data)
         self.saved_outputs[prefix] = data
         self._inputs.clear()
         self._predictions.clear()
