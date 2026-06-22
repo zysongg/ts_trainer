@@ -106,6 +106,12 @@ class PointForecastModule(pl.LightningModule):
         x = batch["x"]
         y = batch["y"]
 
+        custom_loss = self._model_loss(batch, stage)
+        if custom_loss is not None:
+            pred = self.forward(x, **self._build_kwargs(batch))
+            y = self._align_target(y, pred)
+            return {"pred": pred, "y": y, "loss": custom_loss}
+
         # Apply RevIN normalization
         if self.revin is not None:
             x = self.revin(x, mode="norm")
@@ -117,15 +123,34 @@ class PointForecastModule(pl.LightningModule):
         if self.revin is not None:
             pred = self.revin(pred, mode="denorm")
 
-        # Handle different y shapes
-        # y shape: (B, C, label_len + pred_len) or (B, C, pred_len)
-        if pred.shape != y.shape:
-            # Take only the prediction length from y
-            y = y[:, :, -pred.shape[2]:]
+        y = self._align_target(y, pred)
 
         loss = self.loss_fn(pred, y)
 
         return {"pred": pred, "y": y, "loss": loss}
+
+    def _model_loss(self, batch: Dict[str, torch.Tensor], stage: str) -> Optional[torch.Tensor]:
+        """Call model-owned losses when present."""
+        if stage == "train" and hasattr(self.model, "train_loss"):
+            return self.model.train_loss(batch)
+        if stage == "val" and hasattr(self.model, "val_loss"):
+            return self.model.val_loss(batch)
+        if stage == "val" and hasattr(self.model, "train_loss"):
+            return self.model.train_loss(batch)
+        if stage == "test" and hasattr(self.model, "test_loss"):
+            return self.model.test_loss(batch)
+        if stage == "test" and hasattr(self.model, "val_loss"):
+            return self.model.val_loss(batch)
+        if stage == "test" and hasattr(self.model, "train_loss"):
+            return self.model.train_loss(batch)
+        return None
+
+    @staticmethod
+    def _align_target(target: torch.Tensor, pred: torch.Tensor) -> torch.Tensor:
+        """Align label_len+horizon targets to prediction horizon."""
+        if pred.shape != target.shape:
+            target = target[:, :, -pred.shape[2]:]
+        return target
 
     def training_step(self, batch: Dict[str, torch.Tensor], batch_idx: int) -> Dict[str, torch.Tensor]:
         """Training step."""
@@ -196,8 +221,7 @@ class PointForecastModule(pl.LightningModule):
         result = {"inputs": batch["x"], "preds": pred, "pred": pred}
         if "y" in batch:
             y = batch["y"]
-            if pred.shape != y.shape:
-                y = y[:, :, -pred.shape[2]:]
+            y = self._align_target(y, pred)
             result["targets"] = y
             result["y"] = y
         return result

@@ -46,6 +46,14 @@ class SampleForwardProbModel(nn.Module):
         return base.unsqueeze(1).repeat(1, self.num_samples, 1, 1)
 
 
+class LossAwarePointModel(MarkAwarePointModel):
+    def train_loss(self, batch):
+        return batch["x"].sum() * 0 + 3.0
+
+    def val_loss(self, batch):
+        return batch["x"].sum() * 0 + 4.0
+
+
 def _batch(batch_size=2, channels=3, lookback=8, horizon=4, label_len=2):
     return {
         "x": torch.randn(batch_size, channels, lookback),
@@ -82,6 +90,22 @@ def test_point_predict_step_returns_structured_output_with_targets():
     assert out["inputs"].shape == (2, 3, 8)
     assert out["preds"].shape == (2, 3, 4)
     assert out["targets"].shape == (2, 3, 4)
+
+
+def test_point_forecast_module_uses_model_owned_loss():
+    module = PointForecastModule(
+        LossAwarePointModel(horizon=4),
+        loss_fn=lambda pred, target: pred.sum() * 0 + 99.0,
+    )
+    batch = _batch()
+
+    train_out = module._shared_step(batch, "train")
+    val_out = module._shared_step(batch, "val")
+
+    assert torch.isclose(train_out["loss"], torch.tensor(3.0))
+    assert torch.isclose(val_out["loss"], torch.tensor(4.0))
+    assert train_out["pred"].shape == (2, 3, 4)
+    assert train_out["y"].shape == (2, 3, 4)
 
 
 def test_prob_forecast_module_outputs_samples_preds_targets_inputs():

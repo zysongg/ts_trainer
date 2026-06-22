@@ -58,6 +58,10 @@ module = Trainer.create_module(
 )
 ```
 
+For point models, `PointForecastModule` first checks for model-owned
+`train_loss(batch)` / `val_loss(batch)`. If those methods are absent, it uses
+the wrapper `loss_fn`, defaulting to MSE.
+
 Probabilistic forecasting:
 
 ```python
