@@ -136,3 +136,7 @@ class MyModel(pl.LightningModule):
 ## License
 
 MIT
+
+## API 文档
+
+完整 API 边界和示例见 [docs/api.md](docs/api.md)。
