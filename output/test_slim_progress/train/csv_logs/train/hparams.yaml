@@ -1,4 +1,0 @@
-lr: 0.001
-weight_decay: 1.0e-05
-use_norm: false
-norm_affine: false
